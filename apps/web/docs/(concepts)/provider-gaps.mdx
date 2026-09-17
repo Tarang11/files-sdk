@@ -13,7 +13,7 @@ description: A register of per-adapter quirks that don't fit the capability matr
 
 Some adapters return a working URL but don't honor the requested lifetime — the URL is either permanent or has a provider-fixed TTL.
 
-- **Vercel Blob** — public blobs return the permanent CDN URL; `expiresIn` is ignored (there is no signing primitive). Private blobs have no public URL at all, so `url()` throws — use `download()`.
+- **Vercel Blob** — public blobs return the permanent CDN URL; `expiresIn` is ignored because the URL is reachable by anyone already. Private blobs mint a Vercel Signed URL that honors `expiresIn`; Vercel caps the lifetime at 7 days server-side.
 - **Box** — `url()` returns a tokenized download URL, but Box controls its TTL server-side. `expiresIn` is accepted for API symmetry and ignored.
 - **PocketBase** — file-token URLs have a server-controlled TTL (short, ~minutes). `expiresIn` is ignored.
 - **Convex** — serving URLs do not expire while the file exists. `expiresIn` is ignored.

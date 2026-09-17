@@ -71,11 +71,10 @@ The catch-all. Network errors, malformed responses, provider outages, and anythi
 
 The unified API only covers what every adapter can do; a handful of operations are surfaced but throw on adapters that can't honor them. These are the ones worth knowing.
 
-### `url()` throws on three configurations
+### `url()` throws on two configurations
 
-`url()` returns the most direct URL each adapter can produce - a signed `GetObject`, a SAS read URL, a CDN URL when `publicBaseUrl` is configured, etc. Three setups have no URL primitive and will throw:
+`url()` returns the most direct URL each adapter can produce - a signed `GetObject`, a SAS read URL, a CDN URL when `publicBaseUrl` is configured, etc. Two setups have no URL primitive and will throw:
 
-- **Vercel Blob with `access: "private"`** - private blobs are fetched through `@vercel/blob`, not via URL.
 - **R2 Workers binding with no `publicBaseUrl` and no HTTP credentials** - the binding API has no URL primitive. Either configure `publicBaseUrl` (custom domain or `r2.dev`) or pass HTTP credentials alongside the binding to enable signing.
 - **Bunny Storage without `publicBaseUrl`** - the Storage API requires an `AccessKey` header on every request, so there's nothing to hand to a browser. Configure your Pull Zone as `publicBaseUrl`.
 
@@ -85,7 +84,6 @@ The unified API only covers what every adapter can do; a handful of operations a
 
 `signedUploadUrl()` returns a discriminated PUT-or-POST contract so a browser can upload directly to the bucket. These adapters throw:
 
-- **Vercel Blob** - uploads go through `handleUpload()` from `@vercel/blob/client`, not presigned URLs.
 - **Bunny Storage** - writes require the `AccessKey` header.
 - **Appwrite** and **PocketBase** - no presigned upload primitive. Mint a short-lived auth token for the client instead.
 - **fs** - no built-in upload server, signer, or verifier. Upload through `files.upload()` or an application route that enforces controls server-side.

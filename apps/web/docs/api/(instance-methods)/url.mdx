@@ -5,9 +5,9 @@ description: Return a URL to fetch a key - a signed GetObject where the adapter 
 
 `files.url(key, options?)`
 
-Returns a URL the caller can use to fetch `key`. Every adapter returns the most direct URL it can produce. Signing adapters (S3 and the S3-compatible catalog — R2 over HTTP plus every regional / budget / decentralised wrapper — alongside Google Cloud Storage, Azure with shared key, Supabase, UploadThing in `private` mode, and the R2 binding when HTTP credentials are also configured) sign a read URL - defaulting to a 1-hour expiry, override per-call via `{ expiresIn }` or per-adapter via `defaultUrlExpiresIn`. If the adapter is constructed with a `publicBaseUrl` (CDN, custom domain, `r2.dev`, Bunny Pull Zone) or UploadThing's `public-read` ACL, that wins and the URL is built without signing.
+Returns a URL the caller can use to fetch `key`. Every adapter returns the most direct URL it can produce. Signing adapters (S3 and the S3-compatible catalog — R2 over HTTP plus every regional / budget / decentralised wrapper — alongside Google Cloud Storage, Azure with shared key, Supabase, UploadThing in `private` mode, Vercel Blob in `access: "private"` mode, and the R2 binding when HTTP credentials are also configured) sign a read URL - defaulting to a 1-hour expiry, override per-call via `{ expiresIn }` or per-adapter via `defaultUrlExpiresIn`. If the adapter is constructed with a `publicBaseUrl` (CDN, custom domain, `r2.dev`, Bunny Pull Zone) or UploadThing's `public-read` ACL, that wins and the URL is built without signing.
 
-Three configurations have no URL primitive and throw: Vercel Blob in `access: "private"` mode, an R2 Workers binding without either `publicBaseUrl` or HTTP credentials, and Bunny Storage without `publicBaseUrl` because the Storage API URL requires an `AccessKey` header.
+Two configurations have no URL primitive and throw: an R2 Workers binding without either `publicBaseUrl` or HTTP credentials, and Bunny Storage without `publicBaseUrl` because the Storage API URL requires an `AccessKey` header.
 
 ```ts lineNumbers
 // One call, every adapter. S3 and the S3-compatible catalog (R2 over HTTP

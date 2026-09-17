@@ -116,6 +116,23 @@ const completeMultipartUploadMock = mock(
     })
 );
 
+const issueSignedTokenMock = mock((opts: { validUntil?: number }) =>
+  Promise.resolve({
+    clientSigningToken: "client-signing-token",
+    delegationToken: "delegation-token",
+    validUntil: opts.validUntil ?? Date.now() + 3_600_000,
+  })
+);
+const presignUrlMock = mock(
+  (
+    _token: { delegationToken: string; clientSigningToken: string },
+    opts: { operation: string; pathname: string; access: string }
+  ) =>
+    Promise.resolve({
+      presignedUrl: `https://presigned.example.com/${opts.access}/${opts.operation}/${opts.pathname}?sig=abc`,
+    })
+);
+
 mock.module("@vercel/blob", () => ({
   completeMultipartUpload: completeMultipartUploadMock,
   copy: copyMock,
@@ -123,7 +140,9 @@ mock.module("@vercel/blob", () => ({
   del: delMock,
   get: getMock,
   head: headMock,
+  issueSignedToken: issueSignedTokenMock,
   list: listMock,
+  presignUrl: presignUrlMock,
   put: putMock,
   uploadPart: uploadPartMock,
 }));
@@ -145,6 +164,55 @@ const assertOidc = (opts: AuthOpts | undefined) => {
   expect(opts.storeId).toBe("abc123store");
 };
 
+// The first (and only) call each signing mock received, or a thrown error
+// when the code under test never signed.
+const firstIssueCall = () => {
+  const [call] = issueSignedTokenMock.mock.calls;
+  if (!call) {
+    throw new Error("expected issueSignedToken to have been called");
+  }
+  return call[0] as {
+    pathname?: string;
+    operations?: string[];
+    validUntil?: number;
+    allowedContentTypes?: string[];
+    maximumSizeInBytes?: number;
+    abortSignal?: AbortSignal;
+  } & AuthOpts;
+};
+const firstPresignCall = () => {
+  const [call] = presignUrlMock.mock.calls;
+  if (!call) {
+    throw new Error("expected presignUrl to have been called");
+  }
+  const [token, opts] = call;
+  return {
+    opts: opts as {
+      access: string;
+      operation: string;
+      pathname: string;
+      validUntil?: number;
+      allowedContentTypes?: string[];
+      maximumSizeInBytes?: number;
+      addRandomSuffix?: boolean;
+      allowOverwrite?: boolean;
+    },
+    token,
+  };
+};
+// `validUntil` is `Date.now() + expiresIn * 1000` computed inside the
+// adapter; bound it by timestamps taken either side of the call.
+const expectValidUntilNear = (
+  validUntil: number | undefined,
+  before: number,
+  after: number,
+  expiresInSeconds: number
+) => {
+  expect(validUntil).toBeDefined();
+  expect(validUntil).toBeGreaterThanOrEqual(before + expiresInSeconds * 1000);
+  expect(validUntil).toBeLessThanOrEqual(after + expiresInSeconds * 1000);
+};
+
 const originalFetch = globalThis.fetch;
 
 beforeEach(() => {
@@ -163,6 +231,8 @@ beforeEach(() => {
   uploadPartMock.mockClear();
   completeMultipartUploadMock.mockClear();
   getMock.mockClear();
+  issueSignedTokenMock.mockClear();
+  presignUrlMock.mockClear();
   globalThis.fetch = ((url: string | URL | Request) => {
     const u = typeof url === "string" ? url : url.toString();
     if (u.includes("/missing")) {
@@ -512,16 +582,139 @@ describe("vercel-blob adapter", () => {
     }
   });
 
-  test("signedUploadUrl throws Provider", async () => {
+  test("public url() never issues a signed token", async () => {
+    // Public blobs are reachable by anyone already; a presigned copy would
+    // add a control-API round trip without restricting anything.
     const files = new Files({ adapter: vercelBlob() });
-    try {
-      await files.signedUploadUrl("a.txt", { expiresIn: 60 });
-      throw new Error("should have thrown");
-    } catch (error) {
-      expect(error).toBeInstanceOf(FilesError);
-      expect((error as FilesError).code).toBe("Provider");
-      expect((error as FilesError).message).toMatch(/handleUpload/u);
-    }
+    await files.url("a.txt", { expiresIn: 60 });
+    expect(issueSignedTokenMock).not.toHaveBeenCalled();
+    expect(presignUrlMock).not.toHaveBeenCalled();
+  });
+
+  test("public mode reports signedUrl unsupported; private mode supported", () => {
+    expect(new Files({ adapter: vercelBlob() }).capabilities.signedUrl).toEqual(
+      { supported: false }
+    );
+    expect(
+      new Files({ adapter: vercelBlob({ access: "private" }) }).capabilities
+        .signedUrl
+    ).toEqual({ supported: true });
+  });
+
+  describe("signedUploadUrl", () => {
+    test("mints a presigned PUT scoped to the key and expiring with the URL", async () => {
+      const files = new Files({ adapter: vercelBlob() });
+      const before = Date.now();
+      const signed = await files.signedUploadUrl("uploads/a.txt", {
+        expiresIn: 600,
+      });
+      const after = Date.now();
+      expect(signed).toEqual({
+        method: "PUT",
+        url: "https://presigned.example.com/public/put/uploads/a.txt?sig=abc",
+      });
+      const issued = firstIssueCall();
+      expect(issued.pathname).toBe("uploads/a.txt");
+      expect(issued.operations).toEqual(["put"]);
+      expect(issued.token).toBe("test-token");
+      expect(issued.allowedContentTypes).toBeUndefined();
+      expect(issued.maximumSizeInBytes).toBeUndefined();
+      expectValidUntilNear(issued.validUntil, before, after, 600);
+      const { opts, token } = firstPresignCall();
+      expect(token).toMatchObject({
+        clientSigningToken: "client-signing-token",
+        delegationToken: "delegation-token",
+      });
+      expect(opts).toEqual({
+        access: "public",
+        addRandomSuffix: false,
+        allowOverwrite: true,
+        operation: "put",
+        pathname: "uploads/a.txt",
+        validUntil: issued.validUntil,
+      });
+    });
+
+    test("binds contentType and maxSize into both the token and the URL", async () => {
+      const files = new Files({ adapter: vercelBlob() });
+      const signed = await files.signedUploadUrl("a.png", {
+        contentType: "image/png",
+        expiresIn: 60,
+        maxSize: 1024,
+      });
+      expect(signed).toEqual({
+        headers: { "Content-Type": "image/png" },
+        method: "PUT",
+        url: "https://presigned.example.com/public/put/a.png?sig=abc",
+      });
+      const issued = firstIssueCall();
+      expect(issued.allowedContentTypes).toEqual(["image/png"]);
+      expect(issued.maximumSizeInBytes).toBe(1024);
+      const { opts } = firstPresignCall();
+      expect(opts.allowedContentTypes).toEqual(["image/png"]);
+      expect(opts.maximumSizeInBytes).toBe(1024);
+    });
+
+    test("uses the adapter's access mode and suffix/overwrite settings", async () => {
+      const files = new Files({
+        adapter: vercelBlob({
+          access: "private",
+          addRandomSuffix: true,
+          allowOverwrite: false,
+        }),
+      });
+      const signed = await files.signedUploadUrl("a.txt", { expiresIn: 60 });
+      expect(signed.url).toBe(
+        "https://presigned.example.com/private/put/a.txt?sig=abc"
+      );
+      const { opts } = firstPresignCall();
+      expect(opts.access).toBe("private");
+      expect(opts.addRandomSuffix).toBe(true);
+      expect(opts.allowOverwrite).toBe(false);
+    });
+
+    test("minSize: 0 is accepted (the gateway's default)", async () => {
+      const files = new Files({ adapter: vercelBlob() });
+      await files.signedUploadUrl("a.txt", { expiresIn: 60, minSize: 0 });
+      expect(issueSignedTokenMock).toHaveBeenCalledTimes(1);
+    });
+
+    test("a positive minSize fails closed", async () => {
+      const files = new Files({ adapter: vercelBlob() });
+      try {
+        await files.signedUploadUrl("a.txt", { expiresIn: 60, minSize: 1 });
+        throw new Error("should have thrown");
+      } catch (error) {
+        expect(error).toBeInstanceOf(FilesError);
+        expect((error as FilesError).code).toBe("Provider");
+        expect((error as FilesError).message).toMatch(/minSize/u);
+      }
+      expect(issueSignedTokenMock).not.toHaveBeenCalled();
+    });
+
+    test("forwards the abort signal to issueSignedToken", async () => {
+      const files = new Files({ adapter: vercelBlob() });
+      const controller = new AbortController();
+      await files.signedUploadUrl("a.txt", {
+        expiresIn: 60,
+        signal: controller.signal,
+      });
+      expect(firstIssueCall().abortSignal).toBeInstanceOf(AbortSignal);
+    });
+
+    test("maps a rejected token issue to a FilesError", async () => {
+      issueSignedTokenMock.mockImplementationOnce(() =>
+        Promise.reject(Object.assign(new Error("denied"), { status: 403 }))
+      );
+      const files = new Files({ adapter: vercelBlob() });
+      try {
+        await files.signedUploadUrl("a.txt", { expiresIn: 60 });
+        throw new Error("should have thrown");
+      } catch (error) {
+        expect(error).toBeInstanceOf(FilesError);
+        expect((error as FilesError).code).toBe("Unauthorized");
+      }
+    });
   });
 
   test("download fetches the blob URL and returns its body", async () => {
@@ -936,33 +1129,83 @@ describe("vercel-blob adapter", () => {
       expect(fetchCalls).toEqual([]);
     });
 
-    test("url throws Provider with a private-specific message", async () => {
+    test("url mints a presigned GET scoped to the key with a 1h default expiry", async () => {
+      const files = new Files({ adapter: vercelBlob({ access: "private" }) });
+      const before = Date.now();
+      const url = await files.url("docs/a.txt");
+      const after = Date.now();
+      expect(url).toBe(
+        "https://presigned.example.com/private/get/docs/a.txt?sig=abc"
+      );
+      const issued = firstIssueCall();
+      expect(issued.pathname).toBe("docs/a.txt");
+      expect(issued.operations).toEqual(["get"]);
+      expect(issued.token).toBe("test-token");
+      expectValidUntilNear(issued.validUntil, before, after, 3600);
+      const { opts, token } = firstPresignCall();
+      expect(token).toMatchObject({ delegationToken: "delegation-token" });
+      expect(opts).toEqual({
+        access: "private",
+        operation: "get",
+        pathname: "docs/a.txt",
+        validUntil: issued.validUntil,
+      });
+      expect(headMock).not.toHaveBeenCalled();
+    });
+
+    test("url honors per-call expiresIn over defaultUrlExpiresIn", async () => {
+      const files = new Files({
+        adapter: vercelBlob({ access: "private", defaultUrlExpiresIn: 120 }),
+      });
+      let before = Date.now();
+      await files.url("a.txt");
+      let after = Date.now();
+      expectValidUntilNear(firstIssueCall().validUntil, before, after, 120);
+
+      issueSignedTokenMock.mockClear();
+      before = Date.now();
+      await files.url("a.txt", { expiresIn: 30 });
+      after = Date.now();
+      expectValidUntilNear(firstIssueCall().validUntil, before, after, 30);
+    });
+
+    test("url signs even when the storeId fast path would otherwise apply", async () => {
+      // The public fast path synthesizes a CDN URL from the storeId; private
+      // mode must never hand that out because it 401s without credentials.
+      process.env.BLOB_READ_WRITE_TOKEN = "vercel_blob_rw_abc123store_random";
+      const files = new Files({ adapter: vercelBlob({ access: "private" }) });
+      const url = await files.url("a.txt");
+      expect(url).toBe(
+        "https://presigned.example.com/private/get/a.txt?sig=abc"
+      );
+      expect(firstIssueCall().token).toBe("vercel_blob_rw_abc123store_random");
+      process.env.BLOB_READ_WRITE_TOKEN = "test-token";
+    });
+
+    test("url forwards the abort signal to issueSignedToken", async () => {
+      const files = new Files({ adapter: vercelBlob({ access: "private" }) });
+      const controller = new AbortController();
+      await files.url("a.txt", { signal: controller.signal });
+      expect(firstIssueCall().abortSignal).toBeInstanceOf(AbortSignal);
+    });
+
+    test("url maps a rejected token issue to a FilesError", async () => {
+      issueSignedTokenMock.mockImplementationOnce(() =>
+        Promise.reject(Object.assign(new Error("denied"), { status: 403 }))
+      );
       const files = new Files({ adapter: vercelBlob({ access: "private" }) });
       try {
         await files.url("a.txt");
         throw new Error("should have thrown");
       } catch (error) {
         expect(error).toBeInstanceOf(FilesError);
-        expect((error as FilesError).code).toBe("Provider");
-        expect((error as FilesError).message).toMatch(/private/u);
+        expect((error as FilesError).code).toBe("Unauthorized");
       }
-    });
-
-    test("url throws even when the storeId fast path would otherwise apply", async () => {
-      // Fast path is gated on storeId presence; private mode must override
-      // it so we never hand out a URL that 401s.
-      process.env.BLOB_READ_WRITE_TOKEN = "vercel_blob_rw_abc123store_random";
-      const files = new Files({ adapter: vercelBlob({ access: "private" }) });
-      try {
-        await files.url("a.txt");
-        throw new Error("should have thrown");
-      } catch (error) {
-        expect((error as FilesError).code).toBe("Provider");
-      }
-      process.env.BLOB_READ_WRITE_TOKEN = "test-token";
+      expect(presignUrlMock).not.toHaveBeenCalled();
     });
 
     test("url with responseContentDisposition still throws on private blobs", async () => {
+      // Presigned URLs carry no Content-Disposition override either.
       const files = new Files({ adapter: vercelBlob({ access: "private" }) });
       try {
         await files.url("a.txt", { responseContentDisposition: "attachment" });
@@ -970,6 +1213,7 @@ describe("vercel-blob adapter", () => {
       } catch (error) {
         expect((error as FilesError).code).toBe("Provider");
       }
+      expect(issueSignedTokenMock).not.toHaveBeenCalled();
     });
 
     test("download maps blob.get rejection with status 404 to NotFound", async () => {

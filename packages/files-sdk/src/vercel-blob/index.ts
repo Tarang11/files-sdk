@@ -15,6 +15,7 @@ import type {
 import {
   assertRangeHonored,
   assertSlashDelimiter,
+  DEFAULT_URL_EXPIRES_IN,
   existsByProbe,
   joinPublicUrl,
   rangeRequestHeaders,
@@ -71,17 +72,27 @@ export interface VercelBlobAdapterOptions {
    *   reachable via their CDN URL without authentication. `url()` returns a
    *   permanent public URL.
    * - `"private"`: blobs are uploaded with `access: "private"`. They cannot
-   *   be fetched by URL — `download()` and the lazy bodies returned from
-   *   `head()` / `list()` instead route through `blob.get(key, { access:
-   *   "private" })`, which uses whichever credentials the adapter resolved
-   *   (read-write token or OIDC). `url()` throws because there is no
-   *   permanent public URL for private blobs.
+   *   be fetched by their plain URL — `download()` and the lazy bodies
+   *   returned from `head()` / `list()` instead route through `blob.get(key,
+   *   { access: "private" })`, which uses whichever credentials the adapter
+   *   resolved (read-write token or OIDC). `url()` mints a presigned GET URL
+   *   (Vercel Signed URLs) that expires after `expiresIn` seconds.
+   *
+   * `signedUploadUrl()` mints a presigned PUT URL in either mode.
    *
    * The setting is fixed at construction so a single `Files` instance is
    * unambiguously one or the other. If you need both, instantiate two
    * adapters.
    */
   access?: "public" | "private";
+  /**
+   * Default expiry, in seconds, for the presigned URLs `url()` mints in
+   * `access: "private"` mode. Defaults to 3600 (1 hour). Per-call
+   * `url(key, { expiresIn })` overrides. Vercel caps signed-URL lifetime at
+   * 7 days server-side. Ignored in `"public"` mode, where `url()` returns
+   * the permanent CDN URL.
+   */
+  defaultUrlExpiresIn?: number;
   /**
    * Add a random suffix to uploaded keys (Vercel default).
    *
@@ -317,6 +328,37 @@ export const vercelBlob = (
   const allowOverwrite = config.allowOverwrite ?? true;
   const downloadTimeoutMs =
     config.downloadTimeoutMs ?? DEFAULT_DOWNLOAD_TIMEOUT_MS;
+  const defaultUrlExpiresIn =
+    config.defaultUrlExpiresIn ?? DEFAULT_URL_EXPIRES_IN;
+
+  // Vercel Signed URLs are a two-step affair: `issueSignedToken()` asks the
+  // control API for delegation material (one network round trip), then
+  // `presignUrl()` HMAC-signs a concrete URL locally. Issue one token per
+  // call, scoped to exactly this pathname and operation and expiring with
+  // the URL, so a leaked signing key can only ever do what the URL could,
+  // and the caller's `expiresIn` is never silently capped by a longer-lived
+  // cached token.
+  const issueScopedToken = async (
+    pathname: string,
+    operation: "get" | "put",
+    expiresIn: number,
+    signal: AbortSignal | undefined,
+    constraints: {
+      allowedContentTypes?: string[];
+      maximumSizeInBytes?: number;
+    } = {}
+  ) => {
+    const validUntil = Date.now() + expiresIn * 1000;
+    const token = await blob.issueSignedToken({
+      operations: [operation],
+      pathname,
+      validUntil,
+      ...constraints,
+      ...(signal && { abortSignal: signal }),
+      ...resolveAuth(),
+    });
+    return { token, validUntil };
+  };
 
   // For private blobs the public URL field returned by head()/list() requires
   // authentication to fetch — a plain `fetch(url)` would 401. Route body reads
@@ -706,15 +748,60 @@ export const vercelBlob = (
     // blobs read through `blob.get`, which has no range primitive, so they
     // fall through to the gate's loud throw.
     ...(access !== "private" && { supportsRange: true }),
-    signedUploadUrl(_key, _opts): Promise<SignedUpload> {
-      throw new FilesError(
-        "Provider",
-        "vercel-blob: signed upload URLs are not available. Use Vercel's `handleUpload()` route handler with the `@vercel/blob/client` package for browser uploads."
-      );
+    async signedUploadUrl(key, signOpts): Promise<SignedUpload> {
+      // A presigned PUT enforces `allowedContentTypes` and
+      // `maximumSizeInBytes` at the CDN, so `contentType` and `maxSize` are
+      // real constraints here. There is no minimum-size counterpart: a
+      // positive `minSize` cannot be honored, so fail closed rather than
+      // hand out a URL that accepts the empty upload the caller asked to
+      // reject. `0` (and the default) ask for nothing we can't deliver.
+      if (signOpts.minSize !== undefined && signOpts.minSize > 0) {
+        throw new FilesError(
+          "Provider",
+          "vercel-blob: `minSize` is not supported. Vercel presigned uploads enforce a maximum size (`maxSize`) but have no minimum-size constraint; pass `minSize: 0` or omit it, and reject empty uploads at your application gateway."
+        );
+      }
+      const constraints = {
+        ...(signOpts.contentType && {
+          allowedContentTypes: [signOpts.contentType],
+        }),
+        ...(signOpts.maxSize !== undefined && {
+          maximumSizeInBytes: signOpts.maxSize,
+        }),
+      };
+      try {
+        const { token, validUntil } = await issueScopedToken(
+          key,
+          "put",
+          signOpts.expiresIn,
+          signOpts.signal,
+          constraints
+        );
+        const { presignedUrl } = await blob.presignUrl(token, {
+          access,
+          addRandomSuffix,
+          allowOverwrite,
+          operation: "put",
+          pathname: key,
+          validUntil,
+          ...constraints,
+        });
+        return {
+          method: "PUT",
+          url: presignedUrl,
+          ...(signOpts.contentType && {
+            headers: { "Content-Type": signOpts.contentType },
+          }),
+        };
+      } catch (error) {
+        throw mapBlobError(error);
+      }
     },
-    // Vercel Blob has no signing primitive: `url()` returns the permanent
-    // public CDN URL and ignores `expiresIn` (and throws for private blobs).
-    signedUrl: { supported: false },
+    // Public blobs return their permanent CDN URL from `url()`, which is no
+    // more than a public link and ignores `expiresIn`. Private blobs mint a
+    // presigned GET that honors it. Vercel's 7-day ceiling is enforced by
+    // the control API, not here, so no `maxExpiresIn`.
+    signedUrl: { supported: access === "private" },
     // `copy()` is a server-side `blob.copy` — no body round-trip.
     supportsServerSideCopy: true,
     async upload(key, body, options) {
@@ -766,31 +853,43 @@ export const vercelBlob = (
       }
     },
     async url(key, urlOpts) {
-      // `urlOpts.expiresIn` is intentionally ignored: Vercel Blob has no
-      // signing primitive, so the public CDN URL is the only thing we can
-      // return — and it doesn't expire. Documented on `UrlOptions`.
-      //
-      // `responseContentDisposition` is a different story — it's a
-      // security knob (force download for user-uploaded HTML/SVG to
-      // prevent stored XSS). Silently dropping it would be a regression,
-      // so we throw if it's passed. There's no Vercel Blob primitive for
-      // overriding Content-Disposition on a public CDN URL.
+      // `responseContentDisposition` is a security knob (force download for
+      // user-uploaded HTML/SVG to prevent stored XSS). Neither the public
+      // CDN URL nor a Vercel presigned URL can carry a Content-Disposition
+      // override, so silently dropping it would be a regression — throw.
       if (urlOpts?.responseContentDisposition) {
         throw new FilesError(
           "Provider",
-          "vercel-blob: `responseContentDisposition` is not supported. Vercel Blob has no signing primitive, so the Content-Disposition override that prevents stored XSS on user-uploaded HTML/SVG cannot be applied. Use a different provider for buckets with untrusted content."
+          "vercel-blob: `responseContentDisposition` is not supported. Vercel Blob URLs (public and presigned) carry no Content-Disposition override, so the header that prevents stored XSS on user-uploaded HTML/SVG cannot be applied. Use a different provider for buckets with untrusted content."
         );
       }
       // Private blobs have no permanent public URL — the `url` field
-      // returned by head()/list() requires authentication to fetch. Returning
-      // it from `url()` would silently violate the documented "permanent
-      // public URL" contract; callers would hand out URLs that always 401.
+      // returned by head()/list() 401s without credentials. Mint a presigned
+      // GET instead: scoped to this pathname, expiring after `expiresIn`.
       if (access === "private") {
-        throw new FilesError(
-          "Provider",
-          "vercel-blob: url() is not supported for private blobs. Use `download()` to read the body via the SDK with the token."
-        );
+        const expiresIn = urlOpts?.expiresIn ?? defaultUrlExpiresIn;
+        try {
+          const { token, validUntil } = await issueScopedToken(
+            key,
+            "get",
+            expiresIn,
+            urlOpts?.signal
+          );
+          const { presignedUrl } = await blob.presignUrl(token, {
+            access: "private",
+            operation: "get",
+            pathname: key,
+            validUntil,
+          });
+          return presignedUrl;
+        } catch (error) {
+          throw mapBlobError(error);
+        }
       }
+      // Public blobs: `expiresIn` is intentionally ignored. The CDN URL is
+      // already reachable by anyone, so a presigned copy would add a round
+      // trip without restricting anything. Documented on `UrlOptions`.
+      //
       // Fast path: with a known storeId and predictable keys, derive the
       // URL without an API call. `addRandomSuffix: true` makes the actual
       // pathname unknowable in advance, so we have to head() in that case.

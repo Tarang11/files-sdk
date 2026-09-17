@@ -583,13 +583,15 @@ export interface UrlOptions extends OperationOptions {
    * Tigris, and the R2 binding when HTTP credentials are also configured) — those
    * adapters return a presigned URL that expires after `expiresIn` seconds.
    *
-   * **Ignored** by Vercel Blob (public): the underlying CDN URL has no
-   * expiry, and the adapter returns it unchanged. If you need expiring
-   * URLs there, you'll need a different provider — Vercel Blob has no
-   * signing primitive.
+   * **Honored** by Vercel Blob (private) too: `url()` mints a Vercel Signed
+   * URL scoped to the key that expires after `expiresIn` seconds.
    *
-   * **N/A** for adapters where `url()` throws (Vercel Blob private; the
-   * R2 binding without `publicBaseUrl` and without HTTP credentials).
+   * **Ignored** by Vercel Blob (public): the underlying CDN URL has no
+   * expiry and is reachable by anyone already, so the adapter returns it
+   * unchanged.
+   *
+   * **N/A** for adapters where `url()` throws (the R2 binding without
+   * `publicBaseUrl` and without HTTP credentials).
    */
   expiresIn?: number;
   /**
@@ -675,8 +677,8 @@ export interface SignedUrlCapability {
    * {@link UrlOptions.expiresIn} exactly is a separate, per-provider detail —
    * some providers pin the lifetime server-side and ignore the request; see the
    * provider-gaps page. `false` when the adapter has no signing primitive: it
-   * returns only a permanent public URL and ignores `expiresIn` (Vercel Blob,
-   * Appwrite, Convex), or throws because it cannot mint a URL at all (the
+   * returns only a permanent public URL and ignores `expiresIn` (Vercel Blob in
+   * public mode, Appwrite, Convex), or throws because it cannot mint a URL at all (the
    * filesystem, FTP/SFTP, OneDrive / Google Drive outside their public-link
    * mode). When `false`, prefer `download()`.
    */
@@ -919,8 +921,8 @@ export interface Adapter<Raw = unknown> {
    *   and otherwise throws.
    * - **Vercel Blob (public)** returns the permanent CDN URL.
    *   `expiresIn` is ignored.
-   * - **Vercel Blob (private)** throws — there is no URL primitive for
-   *   private blobs. Use `download()` instead.
+   * - **Vercel Blob (private)** mints a Vercel Signed URL (presigned GET)
+   *   scoped to the key, honoring `expiresIn`.
    *
    * **Caller is responsible for URL-encoding.** Adapters do not escape
    * special characters in keys when building URLs against a
@@ -3557,9 +3559,9 @@ export class Files<A extends Adapter = Adapter> {
    * for the per-provider behavior. In short: signing adapters (S3, R2
    * HTTP, MinIO, DigitalOcean Spaces, Storj, Hetzner, Akamai, Backblaze B2,
    * Wasabi, Tigris) return an expiring presigned URL by default;
-   * Vercel-Blob-public returns its permanent CDN URL; configurations
-   * with no URL primitive (Vercel-Blob-private, R2 binding without
-   * `publicBaseUrl`/HTTP creds) throw.
+   * Vercel-Blob-public returns its permanent CDN URL; Vercel-Blob-private
+   * mints a presigned GET; configurations with no URL primitive (R2
+   * binding without `publicBaseUrl`/HTTP creds) throw.
    *
    * **Caller is responsible for URL-encoding.** Adapters do not escape
    * special characters in keys when building URLs against a

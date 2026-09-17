@@ -65,7 +65,7 @@ createFilesRouter({
 `downloadMode: "auto"` (the default) picks the cheapest correct path per adapter:
 
 - **Redirect** — when the adapter can sign URLs (S3, R2, GCS, …), the gateway `302`s to a short-lived signed URL and the bytes flow **directly from storage**. Your server never touches them, and `Range` requests are handled by the provider.
-- **Proxy** — when the adapter can't sign (Vercel Blob private, the filesystem, …), the gateway streams the body through itself with full `Range`/`206` support. The client's abort signal is wired through, so a disconnect cancels the upstream read.
+- **Proxy** — when the adapter can't sign (Vercel Blob in public mode, the filesystem, …), the gateway streams the body through itself with full `Range`/`206` support. The client's abort signal is wired through, so a disconnect cancels the upstream read.
 
 Force one with `downloadMode: "redirect" | "proxy"`. Proxied downloads send `Content-Disposition: attachment` by default (so a stored `.html`/SVG can't execute inline at your origin) unless [`authorize`](/docs/ui/server/authorization) returns `{ disposition: "inline" }`.
 
