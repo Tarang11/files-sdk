@@ -154,7 +154,7 @@ See [references/bulk-and-transfer.md](references/bulk-and-transfer.md).
 
 `url(key, opts?)` returns the most direct URL the adapter can produce. Behavior is not uniform:
 
-- **Signing adapters** (S3, R2 HTTP, MinIO, DigitalOcean Spaces, Storj, Hetzner, Akamai, Backblaze B2, Wasabi, Tigris): presigned `GetObject` URL expiring after `opts.expiresIn` seconds (default ~3600). If the adapter was constructed with `publicBaseUrl`, the URL is built against that origin instead and does not expire.
+- **Signing adapters** (S3, R2 HTTP, MinIO, RustFS, DigitalOcean Spaces, Storj, Hetzner, Akamai, Backblaze B2, Wasabi, Tigris): presigned `GetObject` URL expiring after `opts.expiresIn` seconds (default ~3600). If the adapter was constructed with `publicBaseUrl`, the URL is built against that origin instead and does not expire.
 - **R2 binding**: uses `publicBaseUrl` if set; falls back to HTTP signing if HTTP credentials were also passed (hybrid); otherwise throws.
 - **Vercel Blob (public)**: permanent CDN URL. `expiresIn` is ignored.
 - **Vercel Blob (private)**: throws — no URL primitive. Use `download()`.
@@ -202,7 +202,7 @@ Use this for provider features that aren't in the unified API (versioning, lifec
 
 ## Adapter catalog
 
-40+ adapters. S3-family and S3-compatible stores wrap the `s3()` adapter with provider-friendly defaults (MinIO, DigitalOcean Spaces, Wasabi, Backblaze B2, Tigris, Storj, Hetzner, Scaleway, OVH, Vultr, IBM COS, Oracle, Tencent, Alibaba, Yandex, …). Direct-binding adapters (R2 worker binding, fs, Vercel Blob, Netlify Blobs, GCS, Azure, Supabase, Dropbox, Google Drive, OneDrive, Box, SharePoint, Cloudinary, UploadThing, Appwrite, Convex, Firebase Storage, PocketBase, FTP, SFTP, …) have their own implementation. There's also an in-memory adapter at **`files-sdk/memory`** — full `Adapter` contract backed by a `Map`, zero deps, isomorphic — for testing code that uses `Files` without touching real storage (`url()` returns an opaque `memory://` URL; not for production).
+40+ adapters. S3-family and S3-compatible stores wrap the `s3()` adapter with provider-friendly defaults (MinIO, RustFS, DigitalOcean Spaces, Wasabi, Backblaze B2, Tigris, Storj, Hetzner, Scaleway, OVH, Vultr, IBM COS, Oracle, Tencent, Alibaba, Yandex, …). Direct-binding adapters (R2 worker binding, fs, Vercel Blob, Netlify Blobs, GCS, Azure, Supabase, Dropbox, Google Drive, OneDrive, Box, SharePoint, Cloudinary, UploadThing, Appwrite, Convex, Firebase Storage, PocketBase, FTP, SFTP, …) have their own implementation. There's also an in-memory adapter at **`files-sdk/memory`** — full `Adapter` contract backed by a `Map`, zero deps, isomorphic — for testing code that uses `Files` without touching real storage (`url()` returns an opaque `memory://` URL; not for production).
 
 Always check the live list and per-adapter options at <https://files-sdk.dev> (or the bundled `docs/adapters/`) rather than guessing. The `exports` map in `packages/files-sdk/package.json` is authoritative for what subpaths exist.
 

@@ -53,7 +53,7 @@ const chunk = await files.download("video.mp4", {
 
 **Supported** almost everywhere — the SDK threads the range through whatever primitive each provider exposes:
 
-- **Native byte ranges** — AWS S3 and every S3-compatible adapter (Cloudflare R2 over HTTP, MinIO, DigitalOcean Spaces, Wasabi, Tigris, Backblaze B2, Storj, Hetzner, Akamai, Scaleway, OVHcloud, iDrive e2, Vultr, Filebase, Exoscale, Oracle Cloud, IBM COS, Tencent COS, Alibaba OSS, Yandex), Bun S3, Google Cloud Storage, Firebase Storage, Azure Blob, the **R2 Workers binding** (native `range` option), the local `fs` adapter, and the in-memory adapter.
+- **Native byte ranges** — AWS S3 and every S3-compatible adapter (Cloudflare R2 over HTTP, MinIO, RustFS, DigitalOcean Spaces, Wasabi, Tigris, Backblaze B2, Storj, Hetzner, Akamai, Scaleway, OVHcloud, iDrive e2, Vultr, Filebase, Exoscale, Oracle Cloud, IBM COS, Tencent COS, Alibaba OSS, Yandex), Bun S3, Google Cloud Storage, Firebase Storage, Azure Blob, the **R2 Workers binding** (native `range` option), the local `fs` adapter, and the in-memory adapter.
 - **HTTP `Range` header** — UploadThing, Box, Vercel Blob (public), Cloudinary, PocketBase, Dropbox (via its temporary link), OneDrive, SharePoint, and Google Drive issue a `Range` request against the underlying URL/content endpoint.
 - **Native read offsets** — SFTP threads the range through ssh2 read-stream `start`/`end` byte offsets. FTP begins the transfer at the `REST` start offset and trims a bounded `end` client-side, so an open-ended `{ start }` range transfers only the bytes from the offset on (a bounded `end` still reads to EOF before trimming the tail).
 

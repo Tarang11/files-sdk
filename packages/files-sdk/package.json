@@ -178,6 +178,10 @@
       "types": "./dist/minio/index.d.ts",
       "import": "./dist/minio/index.js"
     },
+    "./rustfs": {
+      "types": "./dist/rustfs/index.d.ts",
+      "import": "./dist/rustfs/index.js"
+    },
     "./neon": {
       "types": "./dist/neon/index.d.ts",
       "import": "./dist/neon/index.js"

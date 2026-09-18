@@ -180,6 +180,19 @@ test(
   COLD_BUILD_TIMEOUT_MS
 );
 
+// rustfs() mirrors minio()'s two-engine model, so the same guard applies.
+test(
+  "rustfs bundle never statically imports an optional peer, even across dynamic chunks",
+  () => {
+    ensureBuilt();
+    const rustfsBundle = path.resolve(distDir, "rustfs/index.js");
+    expect(
+      offendingOptionalPeers(rustfsBundle, { followDynamic: true })
+    ).toEqual([]);
+  },
+  COLD_BUILD_TIMEOUT_MS
+);
+
 // The firebase-storage entry reaches `firebase-admin` only through the
 // `createRequire` loader — invisible to bundlers — so an injected `Bucket`
 // works without the peer being resolvable. Guard against a top-level

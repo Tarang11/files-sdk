@@ -103,7 +103,7 @@ For these, enforce upload caps at your application gateway, or set the bucket / 
 
 ### S3-compatible adapters are S3 wrappers
 
-R2 (HTTP), MinIO, DigitalOcean Spaces, Backblaze B2, Wasabi, Scaleway, OVH, Hetzner, Tigris, Storj, Filebase, Akamai, IDrive E2, Vultr, IBM COS, Oracle Cloud, and Exoscale all wrap the `s3()` adapter with provider-specific defaults (endpoint, path-style, region quirks). If you hit an obscure failure on one of them, reproduce against `s3()` with the same options - if it repros, it's an S3 wire issue; if it doesn't, the wrapper's defaults are the culprit.
+R2 (HTTP), MinIO, RustFS, DigitalOcean Spaces, Backblaze B2, Wasabi, Scaleway, OVH, Hetzner, Tigris, Storj, Filebase, Akamai, IDrive E2, Vultr, IBM COS, Oracle Cloud, and Exoscale all wrap the `s3()` adapter with provider-specific defaults (endpoint, path-style, region quirks). If you hit an obscure failure on one of them, reproduce against `s3()` with the same options - if it repros, it's an S3 wire issue; if it doesn't, the wrapper's defaults are the culprit.
 
 ### `copy` falls back to read+write
 

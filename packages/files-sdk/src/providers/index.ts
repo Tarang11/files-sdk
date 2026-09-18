@@ -138,8 +138,12 @@ const s3Compatible = (
   secretKeyEnv: string,
   config: readonly string[],
   options: {
+    /** Fallback names the adapter also reads for the access key, in order. */
+    accessKeyAliases?: readonly string[];
     accessKeyDescription?: string;
     notes?: string;
+    /** Fallback names the adapter also reads for the secret key, in order. */
+    secretKeyAliases?: readonly string[];
     secretKeyDescription?: string;
   } = {}
 ): ProviderEnvSpec => ({
@@ -149,12 +153,18 @@ const s3Compatible = (
       label: "Access key",
       vars: [
         {
+          ...(options.accessKeyAliases && {
+            aliases: options.accessKeyAliases,
+          }),
           description: options.accessKeyDescription ?? "Access key ID",
           key: accessKeyEnv,
           readBy: "files-sdk",
           secret: true,
         },
         {
+          ...(options.secretKeyAliases && {
+            aliases: options.secretKeyAliases,
+          }),
           description: options.secretKeyDescription ?? "Secret access key",
           key: secretKeyEnv,
           readBy: "files-sdk",
@@ -1169,6 +1179,24 @@ export const PROVIDERS = {
     name: "Cloudflare R2",
     peerDeps: AWS_S3_PEERS,
     slug: "r2",
+  },
+  rustfs: {
+    description:
+      'RustFS, the Apache-2.0 Rust object store that runs as a MinIO drop-in. Path-style addressing on by default; region defaulted; errors relabelled. `client: "fetch"` swaps in an @aws-sdk-free SigV4 fetch engine (the default inside Cloudflare Workers).',
+    env: s3Compatible(
+      "RUSTFS_ACCESS_KEY_ID",
+      "RUSTFS_SECRET_ACCESS_KEY",
+      ["bucket", "endpoint"],
+      {
+        accessKeyAliases: ["RUSTFS_ACCESS_KEY"],
+        notes:
+          "Also falls back to the RUSTFS_ACCESS_KEY / RUSTFS_SECRET_KEY names the RustFS server reads, so one .env configures both sides.",
+        secretKeyAliases: ["RUSTFS_SECRET_KEY"],
+      }
+    ),
+    name: "RustFS",
+    peerDeps: AWS_S3_PEERS,
+    slug: "rustfs",
   },
   s3: {
     description:

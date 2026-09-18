@@ -157,7 +157,7 @@ const adapter = minio({
 });
 ```
 
-Thin wrapper over `s3()` with MinIO-friendly defaults: `forcePathStyle: true`, region default, error messages relabeled `"MinIO error"`. `endpoint` is required. Other S3-compatible stores (DigitalOcean Spaces, Wasabi, Backblaze B2, Tigris, Storj, Hetzner, etc.) follow the same wrapper pattern with provider-specific defaults.
+Thin wrapper over `s3()` with MinIO-friendly defaults: `forcePathStyle: true`, region default, error messages relabeled `"MinIO error"`. `endpoint` is required. **`files-sdk/rustfs`** (`rustfs()`) is the same shape for RustFS servers, with `RUSTFS_ACCESS_KEY_ID` / `RUSTFS_SECRET_ACCESS_KEY` env fallbacks (and the server's own `RUSTFS_ACCESS_KEY` / `RUSTFS_SECRET_KEY`). Other S3-compatible stores (DigitalOcean Spaces, Wasabi, Backblaze B2, Tigris, Storj, Hetzner, etc.) follow the same wrapper pattern with provider-specific defaults.
 
 ## Local filesystem — `files-sdk/fs`
 

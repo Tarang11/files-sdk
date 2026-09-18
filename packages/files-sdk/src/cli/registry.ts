@@ -456,6 +456,13 @@ export const PROVIDERS: ProviderRegistry = {
     },
     required: ["--bucket"],
   },
+  rustfs: {
+    load: async (opts) => {
+      const { rustfs } = await import("../rustfs/index.js");
+      return construct(rustfs, s3LikeOpts(opts), opts.extra);
+    },
+    required: ["--bucket", ENDPOINT_FLAG],
+  },
   s3: {
     load: async (opts) => {
       const { s3 } = await import("../s3/index.js");
